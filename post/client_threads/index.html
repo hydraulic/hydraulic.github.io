@@ -1,0 +1,557 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" >
+
+<title>客户端工程中多线程和锁的常用实践 | Hydraulic</title>
+
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+
+<link rel="stylesheet" href="https://use.fontawesome.com/releases/v5.7.2/css/all.css" integrity="sha384-fnmOCqbTlWIlj8LyTjo7mOUStjsKC4pOpQbqyi7RrhN7udi9RwhKkMHpvLbHG9Sr" crossorigin="anonymous">
+<link rel="shortcut icon" href="https://hydraulic.github.io/favicon.ico?v=1648875904537">
+<link rel="stylesheet" href="https://hydraulic.github.io/styles/main.css">
+
+
+
+<link rel="stylesheet" href="https://unpkg.com/aos@next/dist/aos.css" />
+<script src="https://cdn.jsdelivr.net/npm/vue/dist/vue.js"></script>
+
+
+
+    <meta name="description" content="一. 客户端什么时候应该考虑多线程？
+客户端和服务端在多线程时的差别：
+服务端：在好的硬件性能下，尽量利用多核能力，压榨硬件性能；
+客户端：适配不同性能的硬件，减少主线程的工作，保持流畅的性能水准；从某种意义上来说，对性能的考量反而更加精细..." />
+    <meta name="keywords" content="" />
+  </head>
+  <body>
+    <div id="app" class="main">
+
+      <div class="sidebar" :class="{ 'full-height': menuVisible }">
+  <div class="top-container" data-aos="fade-right">
+    <div class="top-header-container">
+      <a class="site-title-container" href="https://hydraulic.github.io">
+        <img src="https://hydraulic.github.io/images/avatar.png?v=1648875904537" class="site-logo">
+        <h1 class="site-title">Hydraulic</h1>
+      </a>
+      <div class="menu-btn" @click="menuVisible = !menuVisible">
+        <div class="line"></div>
+      </div>
+    </div>
+    <div>
+      
+        
+          <a href="/" class="site-nav">
+            首页
+          </a>
+        
+      
+        
+          <a href="/archives" class="site-nav">
+            归档
+          </a>
+        
+      
+        
+          <a href="/tags" class="site-nav">
+            标签
+          </a>
+        
+      
+        
+          <a href="/post/about" class="site-nav">
+            关于
+          </a>
+        
+      
+    </div>
+  </div>
+  <div class="bottom-container" data-aos="flip-up" data-aos-offset="0">
+    <div class="social-container">
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    </div>
+    <div class="site-description">
+      温故而知新
+    </div>
+    <div class="site-footer">
+      <a class="rss" href="https://hydraulic.github.io/atom.xml" target="_blank"></a>
+    </div>
+  </div>
+</div>
+
+
+      <div class="main-container">
+        <div class="content-container" data-aos="fade-up">
+          <div class="post-detail">
+            <h2 class="post-title">客户端工程中多线程和锁的常用实践</h2>
+            <div class="post-date">2022-04-01</div>
+            
+            <div class="post-content" v-pre>
+              <h2 id="一-客户端什么时候应该考虑多线程">一. 客户端什么时候应该考虑多线程？</h2>
+<p>客户端和服务端在多线程时的差别：<br>
+服务端：在好的硬件性能下，尽量利用多核能力，压榨硬件性能；<br>
+客户端：适配不同性能的硬件，减少主线程的工作，保持流畅的性能水准；从某种意义上来说，对性能的考量反而更加精细；</p>
+<p>在客户端中，一般在如下情况时，需要考虑到多线程问题：</p>
+<ol>
+<li>编写基础框架时<br>
+基础框架作为整个应用使用比较频繁，并且业务方的调用场景有很多种可能，所以一定要在状态和数据管理时考虑到多线程情形。<br>
+例如：不好的写法——iOS的GCDTimer，作为基础依赖，并且是线程库封装，内部状态的管理没有考虑到多线程；</li>
+</ol>
+<pre><code class="language-objectivec">- (void)start
+{
+    if (NO == self.isValid || NO == self.isSuspended) {
+        return;
+    }
+
+    self.isSuspended = NO;
+
+    uint64_t anInterval = self.interval * NSEC_PER_SEC;
+
+    dispatch_time_t aStartTime = dispatch_time(DISPATCH_TIME_NOW,anInterval);
+
+    if (YES == self.willRepeat) {
+        dispatch_source_set_timer(self.dispatchTimer,
+                                  aStartTime, anInterval, 0);
+    } else {
+        dispatch_source_set_timer(self.dispatchTimer,
+                                  aStartTime, DISPATCH_TIME_FOREVER, 0);
+    }
+
+    dispatch_resume(self.dispatchTimer);
+}
+</code></pre>
+<p>改进后，加上状态管理判断和多线程处理：</p>
+<pre><code class="language-objectivec">- (void)start {
+    [_lock lock];
+
+    if (_currentState == Init || _currentState == Suspend) {
+        uint64_t intervalInNsec = _interval * NSEC_PER_MSEC;
+
+        dispatch_source_set_timer(_timer, dispatch_time(DISPATCH_TIME_NOW, intervalInNsec),
+                intervalInNsec, 0);
+
+        dispatch_resume(_timer);
+
+        _currentState = Running;
+    } else {
+        HGLogError(LogTag, @&quot;start state error: %l&quot;, _currentState);
+    }
+
+    [_lock unlock];
+}
+</code></pre>
+<ol start="2">
+<li>实现复杂业务流程时——如登录流程、进房、游戏/秀场的PK流程、支付流程等</li>
+</ol>
+<p>在复杂业务流程中，一般涉及到多个步骤和多种外部输入，都会改变业务流程中的状态和数据；如PK游戏匹配流程里，外部输入分别为<font color=#ff0000>用户发起、协议请求的返回、网络推送结果、用户取消、超时处理</font>等这些操作，而且可能会有重入的风险，都会改变当前匹配状态，如果不考虑到多线程问题，这些状态的管理就有可能混乱。</p>
+<pre><code class="language-java">public boolean startMatching() {
+    synchronized (mLock) {
+        if (mContext.status != GameMatchTaskStatus.None) {
+            MLog.error(mLogTag, &quot;onMatchSuccess status error : &quot; + mContext);
+
+            return false;
+        }
+
+        mMatchStartTime = System.currentTimeMillis();
+
+        mContext.setValue(GameMatchContext.kvo_status, GameMatchTaskStatus.Matching);
+
+        startTimeOutTask();
+
+        FWEvent.sendEventAsync(ThreadBus.High_Pool, this,
+                FWEventActionKey.FWAction_On_Game_Match_State_Changed, mContext.status, mContext);
+
+        MLog.info(mLogTag, &quot;startMatching : &quot; + mContext);
+
+        return true;
+    }
+}
+</code></pre>
+<pre><code>public boolean onRetry() {
+    synchronized (mLock) {
+        if (mContext.status != GameMatchTaskStatus.Matching) {
+            MLog.error(mLogTag, &quot;onRetry status error : &quot; + mContext);
+
+            return false;
+        }
+
+        if (mCurRetryTime &gt;= mMaxRetryTimes) {
+            MLog.error(mLogTag, &quot;cur retry time : &quot; + mCurRetryTime +
+                    &quot;, max retry time: &quot; + mMaxRetryTimes);
+
+            return false;
+        }
+
+        mCurRetryTime++;
+
+        MLog.info(mLogTag, &quot;onRetry time : &quot; + mCurRetryTime + &quot;, context: &quot; + mContext);
+
+        return true;
+    }
+}
+</code></pre>
+<h2 id="二-慎重使用线程安全的容器类">二. 慎重使用线程安全的容器类</h2>
+<p>线程安全的容器类如：CopyOnWriteArrayList、ThreadSafeMutableArray、ConcurrentHashMap、Collections.synchronizedList(List)等；<br>
+<font color=#ff0000 >这些容器类，只能保证容器内部的数据在多线程情况下的完备和一致性，但无法保证你的业务逻辑流程在多线程下的完备性；</font><br>
+例如，如下的几个对mServerSingleGameList 的操作分布在不同线程，虽然列表是一个线程安全容器，但是每一个方法里对列表的操作，都不是一个原子操作，会有多线程数据混乱的风险：</p>
+<pre><code class="language-java">private CopyOnWriteArrayList&lt;SingleGameListItem&gt; mServerSingleGameList = new CopyOnWriteArrayList&lt;&gt;();
+
+@Override
+public void onResponse(final String response, BaseResponseBean&lt;SingleGameListRsp&gt; res,
+                       int id) {
+    MLog.info(TAG, &quot;[requestSingleGameList] response: %s&quot;, response);
+    hasReceivedServerSingleGameList = true;
+    if (res != null &amp;&amp; res.isSuccess() &amp;&amp; res.data != null &amp;&amp; res.data.list != null) {
+        mListLastResponseTime = SystemClock.uptimeMillis();
+        if (callBack != null &amp;&amp; res.data.list.size() &gt; 0 &amp;&amp;
+                !StringUtils.equal(mListResponse, response)) {
+            mServerSingleGameList.clear();
+            mServerSingleGameList.addAll(res.data.list);
+            mVersoin = res.data.version;
+            notifyDataSortStart();
+            mListResponse = response;
+            YYTaskExecutor.execute(new Runnable() {
+                @Override
+                public void run() {
+                    FileStorageUtils.getInstance()
+                            .saveToFile(true, response, FILE_NAME);
+                }
+            });
+        } else if (callBack != null &amp;&amp; mServerSingleGameList != null) {
+            notifyDataSortStart();
+        } else {
+            if (callBack != null) {
+                callBack.onDataNoChange();
+            }
+        }
+    } else {
+        MLog.error(TAG, &quot;[requestSingleGameList] request error, msg: %s&quot;,
+                res == null ? &quot;null res&quot; : res.message);
+        if (callBack != null) {
+            callBack.onError(new RuntimeException(
+                    &quot;onResponse error:&quot; + (res == null ? &quot;null res&quot; : res.message)));
+        }
+    }
+
+    mListRequesting = false;
+}
+
+YYTaskExecutor.execute(new Runnable() {
+    @Override
+    public void run() {
+        if (mServerSingleGameList == null || mServerSingleGameList.size() &lt;= 0) {
+            String data = FileStorageUtils.getInstance().getStrFromFile(true, FILE_NAME);
+            if (StringUtils.isNotEmpty(data)) {
+                Type type = new TypeToken&lt;BaseResponseBean&lt;SingleGameListRsp&gt;&gt;() {
+                }.getType();
+                BaseResponseBean&lt;SingleGameListRsp&gt; res = JsonParser.parseJsonObject(data, type);
+                if (res != null &amp;&amp; res.isSuccess() &amp;&amp; res.data != null &amp;&amp; res.data.list != null) {
+                    mServerSingleGameList.clear();
+                    mServerSingleGameList.addAll(res.data.list);
+                    if (mServerSingleGameList.size() &gt; 0) {
+                        mVersoin = res.data.version;
+                    }
+                }
+            }
+        }
+    }
+}
+</code></pre>
+<pre><code class="language-kotlin">protected val allSkuDetails = ConcurrentHashMap&lt;String, SkuDetailsInfo&gt;()
+
+open fun getDetail(sku: String): SkuDetailsInfo? {
+    return allSkuDetails[sku]
+}
+
+open fun getOldDetail(sku: String): SkuDetailsInfo? {
+    return allSkuDetails[sku]
+}
+
+open fun updateDetails(list: List&lt;SkuDetailsInfo&gt;) {
+    list.forEach {
+        allSkuDetails[it.productId] = it
+    }
+}
+</code></pre>
+<h2 id="三-volatile和原子变量的使用">三. volatile和原子变量的使用</h2>
+<ol>
+<li>volatile的使用</li>
+<li>可见性<br>
+可见性是指当多个线程访问同一个共享变量时，一个线程修改了这个变量的值，其他线程能够立即看得到修改的值。</li>
+<li>原子性<br>
+原子性是指一个操作或者多个操作要么全部执行并且执行的过程不会被任何因素打断，要么就都不执行。</li>
+<li>有序性<br>
+有序性是指程序执行的顺序按照代码的先后顺序执行。</li>
+</ol>
+<p>volatile可以看作一个加锁的简化和受限版：<strong><font color=#ff0000>即变量真正独立于其他变量和自己以前的值；</font></strong></p>
+<ol start="2">
+<li>原子变量的使用<br>
+原子变量在原子性上相当于volatile的进阶版；他的核心用途，<strong><font color=#ff0000>是对变量值修改可以依赖于原来的值</font></strong>，如加操作(getAndAdd, getAndIncrement)、减操作(getAndDecrement)；对应iOS里的 atomic_fetch_add 和 atomic_exchange 等；如下，下面的操作是一个取当前值 然后和0比较后取较大值然后加1的操作：</li>
+</ol>
+<pre><code class="language-java">public void increaseVisitCount() {
+    int current;
+    int nextFlag;
+
+    do {
+        current = visitCount.get();
+
+        nextFlag = Math.max(0, current) + 1;
+    } while (!visitCount.compareAndSet(current, nextFlag));
+}
+</code></pre>
+<ol start="3">
+<li>iOS的atomic和volatile的不同之处<br>
+简而言之，<font color=#ff0000>iOS的atomic关键字是对get和set方法加锁</font>，和volatile的机制以及用法都有一定的差异；</li>
+</ol>
+<p>https://stackoverflow.com/questions/588866/whats-the-difference-between-the-atomic-and-nonatomic-attributes</p>
+<p>https://stackoverflow.com/questions/30161442/atomic-property-with-custom-getter</p>
+<p>四. 自旋锁和普通锁的选择<br>
+这两种锁的选择的本质是 <font color=#ff0000>锁的临界区执行代价的大小</font> 和  <font color=#ff0000>线程在用户态和内核态之间来回的切换的代价大小</font> 之间的抉择。</p>
+<ol>
+<li>单线程下CAS的开销大约为10次加法操作，mutex的上锁+解锁大约为20次加法操作，而read/write lock的开销则更大一些。</li>
+<li>CAS的性能为固定值，而mutex则可以通过改变临界区的大小来调节性能；</li>
+<li>如果临界区中真正的修改操作只占一小部分，那么用CAS可以获得更大的并发度；</li>
+<li>如果临界区中执行的任务过重，并且执行线程的优先级比较低，那么CAS可能会有死循环风险；例如：https://blog.ibireme.com/2016/01/16/spinlock_is_unsafe_in_ios/</li>
+</ol>
+<p>CAS的场景，里面是轻量级任务：</p>
+<pre><code class="language-java">public final AtomicInteger visitCount = new AtomicInteger(1);
+
+public void increaseVisitCount() {
+    int current;
+    int nextFlag;
+
+    do {
+        current = visitCount.get();
+
+        nextFlag = Math.max(0, current) + 1;
+    } while (!visitCount.compareAndSet(current, nextFlag));
+}
+</code></pre>
+<p>iOS中几种锁的性能区别：<br>
+<img src="14e3a74e-7778-4e51-a062-c11a3fda3800.png" alt="avatar" loading="lazy"></p>
+<p>五. 读写锁的使用场景及注意事项</p>
+<p>读写锁最经典的用法就是对<font color=#ff0000><strong>集合或缓存的读写操作</strong></font>上，特别是多读少写的情况。但是读写锁有三个要注意的地方：</p>
+<ol>
+<li>读锁之后的double check</li>
+</ol>
+<pre><code class="language-java">public void addBinding(@NonNull final EventAction eventAction, @NonNull final EventReceiver receiver) {
+    mReadWriteLock.readLock().lock();
+
+    EventReceiverList receiverList = mConnections.get(eventAction);
+
+    if (receiverList == null) {
+        mReadWriteLock.readLock().unlock();
+        mReadWriteLock.writeLock().lock();
+
+        //double check
+        receiverList = mConnections.get(eventAction);
+
+        if (receiverList == null) {
+            receiverList = buildEventReceiverList(eventAction);
+            mConnections.put(eventAction, receiverList);
+        }
+
+        mReadWriteLock.readLock().lock();   //锁降级
+        mReadWriteLock.writeLock().unlock();
+    }
+
+    receiverList.add(receiver); //操作要在读锁内
+
+    mReadWriteLock.readLock().unlock();
+
+    onAddBinding(eventAction, receiver, receiverList);
+}
+</code></pre>
+<ol start="2">
+<li>
+<p>读写锁是可重入锁，但是读写之间是互斥的，所以使用时要小心死锁</p>
+</li>
+<li>
+<p>由于读写锁易死锁的特性，所以最好在使用时使用finally代码块来保证unlock操作一定会执行</p>
+</li>
+</ol>
+<pre><code class="language-java">@Nullable
+public final V remove(@NonNull K key) {
+    LruNode&lt;K, V&gt; node;
+
+    mLock.writeLock().lock();
+
+    try {
+        if ((node = mLocationMap.remove(key)) != null) {
+            node.updateVisitCount(-1);
+
+            if (node.pre != null) {
+                removeNode(node);
+            }
+        }
+    } finally {
+        mLock.writeLock().unlock();
+    }
+
+    if (node == null) {
+        return null;
+    }
+
+    return node.value;
+}
+</code></pre>
+<p>备注：<font color=#ff0000>iOS中的读写锁pthread_rwlock api是不支持锁降级的</font></p>
+<pre><code class="language-objectivec"> - (void)resize:(int)maxSize hotPercent:(float)hotPercent {
+    if (maxSize &lt; HOT_COLD_BOUNDARY || hotPercent &lt; 0.0f || hotPercent &gt;= 1.0f) {
+        [NSException raise:NSRangeException format:@&quot;illegal params maxSize: %d, &quot;
+                                                   &quot;hotPercent: %f&quot;, maxSize, hotPercent];
+    }
+
+    pthread_rwlock_rdlock(&amp;_lock);
+
+    @try {
+        _maxSize = maxSize;
+
+        // maxSize int [2, +∞]
+        // maxHotSize in [1, maxSize - 1]
+        _maxHotSize = MIN(maxSize - 1, MAX(1, (int) (maxSize * hotPercent)));
+
+        if (_curSize &gt; maxSize) {
+            [self trimTo:maxSize];
+        }
+    } @finally {
+        pthread_rwlock_unlock(&amp;_lock);
+    }
+}
+</code></pre>
+<p>六. 一个trick用法，极细粒度的分段锁的使用</p>
+<p>Final key作为 lock object，配合ConcurrentHashMap一起使用，可以支持比较高的并发；</p>
+<p><font color=#ff0000>风险：因为synchronize的对象是一个全局final对象，所以不排除在其他地方也有同样的用法，这样就会形成一个全局锁，总之要慎重使用；</font></p>
+<pre><code class="language-java">@Override
+public &lt;T extends IService&gt; T getService(Class&lt;T&gt; serviceClass) {
+    IServiceCreator&lt;T&gt; creator = null;
+    synchronized (serviceClass) {
+        if (!RuntimeContext.sIsServicesInited &amp;&amp; !RuntimeContext.sIsDebuggable) {
+            return null;
+        }
+
+        if (mCacheServiceMap.containsKey(serviceClass)) {
+            Object cacheService = mCacheServiceMap.get(serviceClass);
+            if (cacheService != null) {
+                return (T) cacheService;
+            }
+        }
+    }
+}
+</code></pre>
+<p>七. 好的代码习惯</p>
+<ol>
+<li>数据或状态管理内聚<br>
+例：不好的写法，把内部集合数据不加限制地用get暴露出去使用，在线上产生过ConcurrentModification：</li>
+</ol>
+<figure data-type="image" tabindex="1"><img src="e988872d-59bb-469e-b788-04ba8c6e8514.png" alt="avatar" loading="lazy"></figure>
+<figure data-type="image" tabindex="2"><img src="f023da00-0b7e-4fb5-9b97-0416de685159.png" alt="avatar" loading="lazy"></figure>
+<figure data-type="image" tabindex="3"><img src="c280706a-6378-4686-ba7c-3e93fb5009f8.png" alt="avatar" loading="lazy"></figure>
+<p>改进的写法：</p>
+<figure data-type="image" tabindex="4"><img src="f1244657-826e-42f9-9312-8ee3c35b8b5f.png" alt="avatar" loading="lazy"></figure>
+<figure data-type="image" tabindex="5"><img src="e088000b-ce71-4289-9508-ce8f3dfb1ecd.png" alt="avatar" loading="lazy"></figure>
+<figure data-type="image" tabindex="6"><img src="778d90e4-9c28-4825-896d-ea6b7af9972d.png" alt="avatar" loading="lazy"></figure>
+<ol start="2">
+<li>对于Android来说，暴露的接口或者回调，加上@MainThread或者@WorkThread注解给调用方</li>
+</ol>
+<pre><code class="language-kotlin">interface IBbsVisitService : IService {
+
+    @MainThread
+    fun loadLog(callback: CommonCallback? = null)
+
+    @MainThread
+    fun onVisit(action: VisitAction)
+
+    @WorkerThread
+    fun isFirstVisit(action: VisitAction): Boolean
+
+    @MainThread
+    fun getNotFirstVisitLogs(action: VisitAction):List&lt;VisitLogItem&gt;
+}
+</code></pre>
+<ol start="3">
+<li>保持回调接口的同步/异步一致性</li>
+</ol>
+<p>如下接口：</p>
+<pre><code class="language-java">void requestUserInfo(long uid, @Nullable OnKSProfileListCallback callback);
+</code></pre>
+<p>我们给外部调用暴露了一个含有callback的接口，同时指定了回调线程：</p>
+<pre><code class="language-java">public interface OnKSProfileListCallback {
+
+    @MainThread
+    void onUISuccess(@NonNull List&lt;UserInfoKS&gt; userInfo);
+
+    @MainThread
+    void onError(String reason, long code);
+}
+</code></pre>
+<p>我们还需要保证的就是<font color=#ff0000>回调的同步及异步的一致性，即如果是同步回调，那么无论内部处理的流程在什么条件下触发callback，都需要保证这个一致性，减少调用者的理解负担。</font></p>
+<p>例如，好的写法，在中途截断了请求流程，但是依然抛到主线程异步回调，保证了回调接口在任何情况下，都在主线程异步回调：</p>
+<pre><code class="language-java">private List&lt;UserInfoBean&gt; getUserInfo(final List&lt;Long&gt; uids,
+                                       final OnProfileListCallback callback,
+                                       boolean justCache, boolean notUseAggregate) {
+
+    if (uids == null || uids.size() == 0) {
+        MLog.info(TAG, &quot;getUserInfo, uid list is empty&quot;);
+        YYTaskExecutor.postToMainThread(() -&gt; {
+            if (callback != null) {
+                callback.onUISuccess(new ArrayList&lt;&gt;(0));
+            }
+        });
+        return null;
+    }
+}
+</code></pre>
+
+            </div>
+            
+            
+              <div class="next-post">
+                <div class="next">下一篇</div>
+                <a href="https://hydraulic.github.io/post/hello-gridea/">
+                  <h3 class="post-title">
+                    Hello Gridea
+                  </h3>
+                </a>
+              </div>
+            
+
+            
+
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+    <script src="https://unpkg.com/aos@next/dist/aos.js"></script>
+<script type="application/javascript">
+
+AOS.init();
+
+var app = new Vue({
+  el: '#app',
+  data: {
+    menuVisible: false,
+  },
+})
+
+</script>
+
+
+
+
+
+
+  </body>
+</html>

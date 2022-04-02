@@ -8,7 +8,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 
 <link rel="stylesheet" href="https://use.fontawesome.com/releases/v5.7.2/css/all.css" integrity="sha384-fnmOCqbTlWIlj8LyTjo7mOUStjsKC4pOpQbqyi7RrhN7udi9RwhKkMHpvLbHG9Sr" crossorigin="anonymous">
-<link rel="shortcut icon" href="https://hydraulic.github.io/favicon.ico?v=1648875904537">
+<link rel="shortcut icon" href="https://hydraulic.github.io/favicon.ico?v=1648879023657">
 <link rel="stylesheet" href="https://hydraulic.github.io/styles/main.css">
 
 
@@ -31,7 +31,7 @@
   <div class="top-container" data-aos="fade-right">
     <div class="top-header-container">
       <a class="site-title-container" href="https://hydraulic.github.io">
-        <img src="https://hydraulic.github.io/images/avatar.png?v=1648875904537" class="site-logo">
+        <img src="https://hydraulic.github.io/images/avatar.png?v=1648879023657" class="site-logo">
         <h1 class="site-title">Hydraulic</h1>
       </a>
       <div class="menu-btn" @click="menuVisible = !menuVisible">
@@ -107,7 +107,7 @@
 基础框架作为整个应用使用比较频繁，并且业务方的调用场景有很多种可能，所以一定要在状态和数据管理时考虑到多线程情形。<br>
 例如：不好的写法——iOS的GCDTimer，作为基础依赖，并且是线程库封装，内部状态的管理没有考虑到多线程；</li>
 </ol>
-<pre><code class="language-objectivec">- (void)start
+<pre><code class="language-java">- (void)start
 {
     if (NO == self.isValid || NO == self.isSuspended) {
         return;
@@ -177,7 +177,7 @@
     }
 }
 </code></pre>
-<pre><code>public boolean onRetry() {
+<pre><code class="language-java">public boolean onRetry() {
     synchronized (mLock) {
         if (mContext.status != GameMatchTaskStatus.Matching) {
             MLog.error(mLogTag, &quot;onRetry status error : &quot; + mContext);

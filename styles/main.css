@@ -364,9 +364,9 @@ a {
   padding: 24px 16px;
   color: #dee2e6;
   font-size: 12px;
-  margin: auto;
 }
 .sidebar .bottom-container .site-description {
+  text-align: center;
   padding: 16px 0;
 }
 .sidebar .bottom-container a {
